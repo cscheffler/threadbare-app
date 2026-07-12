@@ -15,6 +15,7 @@ from datetime import date
 from pathlib import Path
 
 from . import events as ev
+from . import server
 from .fold import Item, Person, State, Thread, fold
 from .ids import new_item_id, person_id, slugify, thread_id
 from .log import Event, FileLog, Log
@@ -428,6 +429,15 @@ def cmd_thread_list(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- serve
+
+def cmd_serve(args) -> int:
+    path = log_path(args)
+    print(f"serving on http://127.0.0.1:{args.port} — log: {path}")
+    server.serve(path, port=args.port)
+    return 0
+
+
 # ---------------------------------------------------------------- parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -499,6 +509,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--people", help="comma-separated names/ids of existing people")
     sp.set_defaults(func=cmd_thread_add)
     tsub.add_parser("list").set_defaults(func=cmd_thread_list)
+
+    sp = sub.add_parser("serve", help="run the backend (static SPA + log endpoints)")
+    sp.add_argument("--port", type=int, default=8787)
+    sp.set_defaults(func=cmd_serve)
 
     return p
 
