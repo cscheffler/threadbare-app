@@ -2,9 +2,10 @@
 
 A note-taking surface that happens to remember people. See [SPEC.md](SPEC.md).
 
-This is v1, build-order steps 1–3: the append-only log, the fold, and the CLI.
-No backend, no frontend, no LLM yet — the point is to live with the event
-schema for a week before building anything downstream.
+This is v1 through build-order step 6: the append-only log, the fold, the
+CLI, the localhost backend, and the browser frontend (scratchpad +
+dashboard). Enrichment (step 7), export (8), and HttpLog (9) are not built
+yet — everything works with notation-only parsing and no LLM.
 
 ## Install
 
@@ -34,7 +35,15 @@ app close itm_01ABC -m "sent it"
 
 app render --thread sarah-chen   # markdown to stdout
 app render --item itm_01ABC      # one item's whole chain
+
+app serve                        # http://127.0.0.1:8787 — the browser app
 ```
+
+The browser app is the meeting-time surface: the scratchpad writes a draft
+to localStorage on every keystroke and never touches the network while you
+type; saves go through a retry queue, so the backend can be dead all meeting
+and nothing is lost (the status dot shows green/grey/red). The CLI and the
+browser can write to the same log at the same time.
 
 Item ids accept unique prefixes. `app note` also takes `-m "body"` or a piped
 stdin body; `--yes` skips prompts (creates unknown people/threads, closes
@@ -55,5 +64,6 @@ Items nudge after **3 days** by default (`THREADBARE_NUDGE_DAYS` to change).
 ## Development
 
 ```sh
-PYTHONPATH=src python3 -m pytest tests/ -q
+PYTHONPATH=src python3 -m pytest tests/ -q          # Python: log, fold, CLI, server
+node --test tests/frontend_core.test.mjs            # JS port of fold/notation/ULID
 ```
