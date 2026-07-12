@@ -91,6 +91,19 @@ parsed, never a source of truth. Deleting it loses nothing.
   Batch operations, grepping, and export belong in the terminal; the meeting-time
   interface does not.
 
+  ```
+  app note -t THREAD [-m TEXT]   # capture; notation parsed locally, no LLM
+  app close ITEM [-m COMMENT]    # resolve an item (dismisses its nudge)
+  app reopen ITEM
+  app snooze ITEM WHEN           # emits a nudge event (3d, 2w, 2026-08-01, never)
+  app open                       # all open items, grouped by person
+  app due                        # open items due today or overdue
+  app dash                       # the four dashboard sections, as text
+  app person … / app thread …    # create, update, list entities
+  app render …                   # markdown to stdout; see Export
+  app export …                   # see Export
+  ```
+
 ---
 
 ## Resilience
@@ -178,13 +191,16 @@ cheap to rewrite.
       "id": "itm_01H...",
       "kind": "commit",           // "commit" | "question"
       "text": "send her the format-robustness draft",
-      "owner": "me"               // "me" | person id | null
+      "owner": "me",              // "me" | person id | null
+      "due": "2026-06-17"         // nudge date, resolved at save; null = never nudge
     }
   ],
   "closes": "itm_01H...",         // for type=close
   "supersedes": "itm_01H...",     // for type=revise
-  "comment": "sent an outline instead", // optional, on close/revise
-  "due": "2026-07-01"             // for type=nudge
+  "reopens": "itm_01H...",        // for type=reopen
+  "comment": "sent an outline instead", // optional, on close/revise/nudge
+  "item": "itm_01H...",           // for type=nudge: the item being re-dated
+  "due": "2026-07-01"             // for type=nudge: the new nudge date; null = never
 }
 ```
 
@@ -201,7 +217,7 @@ else. Fields not relevant to an event type are omitted.
 | `reopen` | Un-closes an item. Rare; include for completeness. |
 | `person` | Creates or updates a person record. |
 | `thread` | Creates or updates a thread record. |
-| `nudge` | A time-based or cadence-based reminder attached to a person or thread. |
+| `nudge` | Re-dates an item's nudge (snooze / push out). Carries `item` + `due`. |
 
 A `note` that closes items emits **one** `note` event plus one `close` event per
 item closed. Do not overload `note` with close semantics — keeping them as
@@ -224,6 +240,9 @@ events, with state derived from subsequent `close` / `revise` / `reopen` events.
 An item has exactly two states: **open** or **closed**. Do not build a state
 machine. Mutation is handled by `revise` chains, not by extra states.
 
+Every item carries a `due` date — its nudge date — resolved at save time.
+`nudge` events re-date it; the fold takes the last one. See [Nudges](#nudges).
+
 ---
 
 ## Notation
@@ -237,13 +256,51 @@ marked — but the marked path must be fast.
 | `>` (line-initial) | a commitment (mine or theirs) |
 | `?` (line-initial) | an open question |
 | `>>` (line-initial) | closes an open item — fuzzy-matched at save time |
+| `!when` (on a `>` / `?` line) | sets the item's nudge date: `!10d`, `!2w`, `!2026-08-01`, `!never` |
 
 `>>` matching: at save, fuzzy-match the text against open items belonging to the
 people mentioned in this note. Present matches for confirmation. Never
 auto-close without confirmation.
 
+`!` resolution: relative specs (`!10d`, `!2w`) count from the note's date; an
+ISO date is taken as-is; `!never` opts the item out of nudging. No `!` at all
+means the default: note date + 3 days. The token is stripped from the item
+text at save; the resolved date lands in the item's `due` field.
+
 Closing via the sidebar is the primary path; `>>` is the fast path for when the
 user is already typing.
+
+---
+
+## Nudges
+
+Every open item nudges. A commitment or question that has gone quiet for a few
+days is exactly the thing this app exists to catch, so nudging is opt-out, not
+opt-in.
+
+- **Every item gets a nudge date (`due`) when it is opened.** Default: the
+  note's date + 3 days (configurable via `THREADBARE_NUDGE_DAYS`). Override per
+  item with the `!` notation; `!never` opts the item out.
+- **The date is resolved at save time and stored on the item** — events carry
+  enough to reconstruct state without consulting configuration.
+- **A nudge fires by appearing in "Due today"** once its date arrives, and
+  stays there while the item is open. Pull-only: no timers, no notifications
+  (see Non-goals).
+- **Dismissing a nudge = closing the item** (a `close` event, optional
+  comment). There is no separate "dismissed" state.
+- **Snoozing = a `nudge` event** carrying the item id and a new date. The
+  fold's rule is trivial: an item's effective due date is the `due` of the last
+  `nudge` event targeting it, else the item's own `due`. The item reappears in
+  "Due today" when the new date arrives.
+
+Snoozes are deliberately *not* `revise` events: `revise` chains record changes
+to what an item *is*, and pushing a date is not that. Keeping them separate
+keeps the item-history chain about content — the same reason `note` doesn't
+carry close semantics.
+
+UI: each "Due today" row offers close (with optional comment) and snooze
+(+3 days, +1 week, or pick a date). CLI: `app due` lists them; `app snooze
+<item> <when>` and `app close <item>` act on them.
 
 ---
 
@@ -254,7 +311,8 @@ user is already typing.
 Read-only, scannable, no interaction required to be useful. Four sections, no
 more:
 
-- **Due today** — nudges falling due.
+- **Due today** — open items whose nudge date has arrived (today or overdue).
+  Each row can be closed or snoozed in place. See [Nudges](#nudges).
 - **Gone quiet** — people with no contact in `cadence_days` (per-person, set
   once).
 - **Open loops** — all unresolved commitments and questions, grouped by person.
@@ -387,6 +445,38 @@ POST /enrich   {body, context}  → 200 {people, items, closes, body_clean}
   `since`-comparison rather than an index lookup. This is the reason for ULIDs
   over UUIDs; do not substitute.
 - The API key lives in the backend's environment. Never sent to the browser.
+
+### Enrichment providers
+
+`/enrich` is the only place the app talks to an LLM, and the provider is
+configurable. One interface, mirroring the `Log` pattern:
+
+```python
+class Enricher(Protocol):
+    def enrich(self, body: str, context: Context) -> Enrichment: ...
+```
+
+Selected by environment variable; the backend constructs exactly one at startup:
+
+| `LLM_PROVIDER` | mechanism | auth / config |
+|---|---|---|
+| `anthropic` (default) | Anthropic Messages API | `ANTHROPIC_API_KEY`; model via `LLM_MODEL` (default `claude-opus-4-8`) |
+| `openai` | OpenAI API | `OPENAI_API_KEY`; model via `LLM_MODEL` |
+| `claude-cli` | subprocess: `claude -p`, prompt on stdin, output on stdout | whatever the CLI is logged in as |
+| `codex-cli` | subprocess: `codex exec`, prompt on stdin, output on stdout | whatever the CLI is logged in as |
+
+For the subprocess providers, `LLM_CMD` overrides the exact command line when
+the defaults don't fit. Rules, identical for every provider:
+
+- The prompt asks for a single JSON object (`people`, `items`, `closes`,
+  `body_clean`); the response is parsed, never trusted — malformed output is an
+  enrichment failure, not an error to surface as broken data.
+- Failure of any kind — non-zero exit, timeout (30s), unparseable output, API
+  error — degrades per [Resilience](#llm-calls): the note saves unenriched.
+- API keys live in the backend's environment. Never in the page, never in the
+  log.
+- Subprocess providers get the prompt via **stdin, not argv** — prompts contain
+  the user's notes, and argv is visible to `ps`.
 
 ### Storage interface
 
@@ -572,6 +662,10 @@ Explicitly out of scope. Do not build these.
 - [ ] The raw text of every note is recoverable verbatim from the log.
 - [ ] A commitment opened, revised twice, and closed renders as a single
       coherent chain in the item view.
+- [ ] An item saved with no `!` mark appears in "Due today" three days later;
+      one saved with `!never` never does.
+- [ ] Snoozing an item removes it from "Due today" until the new date; its
+      revision chain is untouched.
 - [ ] Save can be completed with three keystrokes and no mouse.
 - [ ] `rm -rf export/ && app export` reproduces the export directory byte-for-byte.
 - [ ] Nothing in the codebase reads from `export/`.
@@ -594,8 +688,9 @@ Build in this order. Do not skip ahead.
    in the codebase ever touches the file. Thirty lines, and everything else
    depends on getting it right.
 2. **The fold.** A pure function from events to state. No UI, no LLM, no server.
-3. **The CLI.** `app note`, `app close`, `app open`, `app render`. Enough to use
-   the system from a terminal with hand-typed notation.
+3. **The CLI.** `app note`, `app close`, `app open` (list open items),
+   `app due`, `app snooze`, `app render`. Enough to use the system — nudges
+   included — from a terminal with hand-typed notation.
 4. **Live with (1)–(3) for a week.** This is the only way to find out whether
    the event schema is right, which is the only thing here that is expensive to
    get wrong. Everything downstream is a fold and can be rewritten in an
