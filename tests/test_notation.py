@@ -42,6 +42,7 @@ def test_bang_only_strips_the_token():
 def test_mentions_exclude_trailing_punctuation():
     assert parse("Got introduced to @Brandon by @Jazon.").mentions == ["Brandon", "Jazon"]
     assert parse("@sam. and @sam.smith and @al-").mentions == ["sam", "sam.smith", "al"]
+    assert parse("Met @Sarah-Jane today.").mentions == ["Sarah-Jane"]
 
 
 def test_resolve_due():

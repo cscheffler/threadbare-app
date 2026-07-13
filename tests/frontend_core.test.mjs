@@ -91,6 +91,7 @@ test("parse: bang-only strips the token", () => {
 test("parse: mentions exclude trailing punctuation", () => {
   assert.deepEqual(TB.parse("Got introduced to @Brandon by @Jazon.").mentions, ["Brandon", "Jazon"]);
   assert.deepEqual(TB.parse("@sam. and @sam.smith and @al-").mentions, ["sam", "sam.smith", "al"]);
+  assert.deepEqual(TB.parse("Met @Sarah-Jane today.").mentions, ["Sarah-Jane"]);
 });
 
 test("resolveDue: defaults, relative, ISO, never, bad spec", () => {
