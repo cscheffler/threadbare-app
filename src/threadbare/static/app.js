@@ -32,6 +32,16 @@ function el(tag, attrs, children) {
 
 function dateOf(ts) { return (ts || "").slice(0, 10); }
 
+// "(opened 2026-07-01; nudge 2026-07-03)" or "(opened 2026-07-01)" when the
+// item has no effective due (never-nudge, or nudged off). The nudge date is
+// always the fold's effectiveDue — last nudge event wins, else the item's
+// own due — never recomputed here.
+function loopDatesLabel(s, item) {
+  const opened = "opened " + dateOf(item.opened_ts);
+  const due = s.effectiveDue(item);
+  return due ? "(" + opened + "; nudge " + dateOf(due) + ")" : "(" + opened + ")";
+}
+
 function dedupe(arr) {
   const out = [], seen = new Set();
   for (const x of arr) if (!seen.has(x)) { seen.add(x); out.push(x); }
@@ -283,17 +293,17 @@ function groupedOpenLoops(s, items) {
     if (pid) h3.appendChild(personLink(pid, name)); else h3.textContent = name;
     wrap.appendChild(h3);
     const list = el("div", { class: "row-list" });
-    for (const item of groups.get(pid)) list.appendChild(openLoopRow(item));
+    for (const item of groups.get(pid)) list.appendChild(openLoopRow(s, item));
     wrap.appendChild(list);
   }
   return wrap;
 }
 
-function openLoopRow(item) {
+function openLoopRow(s, item) {
   const row = el("div", { class: "loop-row" });
   const mark = item.kind === "commit" ? "›" : "?";
   row.appendChild(el("span", { class: "mark", text: mark }));
-  row.appendChild(el("span", { class: "item-text", text: item.text + " (opened " + dateOf(item.opened_ts) + ")" }));
+  row.appendChild(el("span", { class: "item-text", text: item.text + " " + loopDatesLabel(s, item) }));
   const actions = el("span", { class: "actions" });
   actions.appendChild(closeWidget(item.id, renderDash));
   row.appendChild(actions);
@@ -563,7 +573,8 @@ function renderPad() {
         if (cb.checked) PadState.sidebarTicks.add(item.id); else PadState.sidebarTicks.delete(item.id);
       });
       label.appendChild(cb);
-      label.appendChild(document.createTextNode(" " + item.text));
+      label.appendChild(document.createTextNode(" " + item.text + " "));
+      label.appendChild(el("span", { class: "item-dates", text: loopDatesLabel(App.folded, item) }));
       aside.appendChild(label);
     }
   } else {

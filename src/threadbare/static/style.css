@@ -95,6 +95,7 @@ main#view { max-width: 900px; margin: 0 auto; padding: 0.5em 1em 3em; }
 .pad-actions { display: flex; align-items: center; margin-top: 0.6em; }
 .hint { color: var(--muted); font-size: 0.85em; margin-left: 0.5em; }
 .sidebar-row { display: block; margin-bottom: 0.4em; }
+.item-dates { color: var(--muted); font-size: 0.8em; }
 
 .overlay {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45);
