@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-MENTION_RE = re.compile(r"@([A-Za-z][A-Za-z0-9_.'-]*)")
+MENTION_RE = re.compile(r"@([A-Za-z](?:[A-Za-z0-9_.'-]*[A-Za-z0-9_])?)")
 DUE_RE = re.compile(r"(?:(?<=\s)|^)!(never|\d{4}-\d{2}-\d{2}|\d+[dw])\b", re.IGNORECASE)
 
 DEFAULT_NUDGE_DAYS = 3

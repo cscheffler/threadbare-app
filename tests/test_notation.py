@@ -39,6 +39,11 @@ def test_bang_only_strips_the_token():
     assert item.text == "fix the thing about x!y"
 
 
+def test_mentions_exclude_trailing_punctuation():
+    assert parse("Got introduced to @Brandon by @Jazon.").mentions == ["Brandon", "Jazon"]
+    assert parse("@sam. and @sam.smith and @al-").mentions == ["sam", "sam.smith", "al"]
+
+
 def test_resolve_due():
     base = date(2026, 7, 12)
     assert resolve_due(None, base) == "2026-07-15"          # default 3 days

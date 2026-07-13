@@ -88,6 +88,11 @@ test("parse: bang-only strips the token", () => {
   assert.equal(item.text, "fix the thing about x!y");
 });
 
+test("parse: mentions exclude trailing punctuation", () => {
+  assert.deepEqual(TB.parse("Got introduced to @Brandon by @Jazon.").mentions, ["Brandon", "Jazon"]);
+  assert.deepEqual(TB.parse("@sam. and @sam.smith and @al-").mentions, ["sam", "sam.smith", "al"]);
+});
+
 test("resolveDue: defaults, relative, ISO, never, bad spec", () => {
   const base = "2026-07-12";
   assert.equal(TB.resolveDue(null, base), "2026-07-15"); // default 3 days

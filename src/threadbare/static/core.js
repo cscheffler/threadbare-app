@@ -94,7 +94,7 @@
   // notation.py
   // ================================================================
 
-  const MENTION_SRC = "@([A-Za-z][A-Za-z0-9_.'-]*)";
+  const MENTION_SRC = "@([A-Za-z](?:[A-Za-z0-9_.'-]*[A-Za-z0-9_])?)";
   const DUE_SRC = "(?:(?<=\\s)|^)!(never|\\d{4}-\\d{2}-\\d{2}|\\d+[dw])\\b";
   const DEFAULT_NUDGE_DAYS = 3;
 
