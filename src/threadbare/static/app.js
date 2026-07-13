@@ -100,6 +100,10 @@ function clearDraft() { localStorage.removeItem(LS_DRAFT); }
 
 const App = { serverEvents: [], events: [], folded: TB.fold([]), cursor: null, lastContactOK: null };
 const PeopleState = { filter: "" };
+// PersonPageState.editing holds the id of the person whose inline edit form
+// is open, else null. Keyed by id (not a bool) so navigating to a different
+// person never accidentally reopens someone else's form.
+const PersonPageState = { editing: null };
 const PadState = {
   selectedThreadId: null, newThread: null, textareaValue: "",
   queuedLock: null, sidebarTicks: new Set(), pendingRestore: null, draftNotice: null,
@@ -1080,15 +1084,25 @@ function renderPersonView(pid) {
   }
 
   const card = el("div", { class: "person-card" });
-  card.appendChild(el("h1", { text: p.name || p.id }));
-  const metaLines = [];
-  if (p.aliases && p.aliases.length) metaLines.push("aka " + p.aliases.join(", "));
-  if (p.org) metaLines.push(p.org);
-  if (p.tags && p.tags.length) metaLines.push("tags: " + p.tags.join(", "));
-  if (p.met_context) metaLines.push("met: " + p.met_context);
-  if (p.cadence_days !== null && p.cadence_days !== undefined) metaLines.push("cadence: " + p.cadence_days + "d");
-  if (p.last_contact) metaLines.push("last contact: " + dateOf(p.last_contact));
-  for (const line of metaLines) card.appendChild(el("p", { class: "muted person-meta-line", text: line }));
+  if (PersonPageState.editing === pid) {
+    card.appendChild(personEditForm(p));
+  } else {
+    card.appendChild(el("h1", { text: p.name || p.id }));
+    const metaLines = [];
+    if (p.aliases && p.aliases.length) metaLines.push("aka " + p.aliases.join(", "));
+    if (p.org) metaLines.push(p.org);
+    if (p.tags && p.tags.length) metaLines.push("tags: " + p.tags.join(", "));
+    if (p.met_context) metaLines.push("met: " + p.met_context);
+    if (p.cadence_days !== null && p.cadence_days !== undefined) metaLines.push("cadence: " + p.cadence_days + "d");
+    if (p.last_contact) metaLines.push("last contact: " + dateOf(p.last_contact));
+    for (const line of metaLines) card.appendChild(el("p", { class: "muted person-meta-line", text: line }));
+    const editBtn = el("button", { class: "btn-small person-edit-btn", text: "Edit" });
+    editBtn.addEventListener("click", () => {
+      PersonPageState.editing = pid;
+      renderPersonView(pid);
+    });
+    card.appendChild(editBtn);
+  }
   view.appendChild(card);
 
   view.appendChild(el("h2", { text: "Open loops" }));
@@ -1110,6 +1124,133 @@ function renderPersonView(pid) {
     .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
   if (!notes.length) view.appendChild(el("p", { class: "muted", text: "no notes yet" }));
   else for (const n of notes) view.appendChild(personNoteBlock(s, n));
+}
+
+// Inline edit form for the person card. Prefilled from the fold's current
+// record; Save builds a `person` event carrying only the fields that
+// actually changed (the fold merges field-wise — see core.js PERSON_FIELDS),
+// so an untouched field must never appear in the emitted record.
+function personEditForm(p) {
+  const form = el("div", { class: "person-edit-form" });
+
+  function fieldRow(labelText, input) {
+    const row = el("div", { class: "person-edit-row" });
+    row.appendChild(el("label", { class: "person-edit-label", text: labelText }));
+    row.appendChild(input);
+    return row;
+  }
+
+  const nameInput = el("input", { type: "text", class: "person-edit-input" });
+  nameInput.value = p.name || "";
+  const orgInput = el("input", { type: "text", class: "person-edit-input" });
+  orgInput.value = p.org || "";
+  const aliasesInput = el("input", { type: "text", class: "person-edit-input" });
+  aliasesInput.value = (p.aliases || []).join(", ");
+  const tagsInput = el("input", { type: "text", class: "person-edit-input" });
+  tagsInput.value = (p.tags || []).join(", ");
+  const linksInput = el("input", { type: "text", class: "person-edit-input" });
+  linksInput.value = (p.links || []).join(", ");
+  const metInput = el("input", { type: "text", class: "person-edit-input" });
+  metInput.value = p.met_context || "";
+  const cadenceInput = el("input", {
+    type: "text", class: "person-edit-input", inputmode: "numeric", placeholder: "days, blank = none",
+  });
+  cadenceInput.value = (p.cadence_days !== null && p.cadence_days !== undefined) ? String(p.cadence_days) : "";
+  const cadenceError = el("span", { class: "person-edit-error" });
+
+  form.appendChild(fieldRow("name", nameInput));
+  form.appendChild(fieldRow("org", orgInput));
+  form.appendChild(fieldRow("aliases", aliasesInput));
+  form.appendChild(fieldRow("tags", tagsInput));
+  form.appendChild(fieldRow("links", linksInput));
+  form.appendChild(fieldRow("met", metInput));
+  const cadenceRow = fieldRow("cadence (days)", cadenceInput);
+  cadenceRow.appendChild(cadenceError);
+  form.appendChild(cadenceRow);
+
+  const actions = el("div", { class: "person-edit-actions" });
+  const saveBtn = el("button", { class: "btn-primary", text: "Save" });
+  const cancelBtn = el("button", { class: "btn-small", text: "Cancel" });
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+  form.appendChild(actions);
+
+  function cancel() {
+    PersonPageState.editing = null;
+    renderPersonView(p.id);
+  }
+
+  async function save() {
+    cadenceError.textContent = "";
+    const record = { id: p.id };
+
+    addTextFieldDiff(record, "name", nameInput.value, p.name);
+    addTextFieldDiff(record, "org", orgInput.value, p.org);
+    addTextFieldDiff(record, "met_context", metInput.value, p.met_context);
+    addListFieldDiff(record, "aliases", aliasesInput.value, p.aliases);
+    addListFieldDiff(record, "tags", tagsInput.value, p.tags);
+    addListFieldDiff(record, "links", linksInput.value, p.links);
+
+    const cadenceRaw = cadenceInput.value.trim();
+    let cadenceValue;
+    if (cadenceRaw === "") {
+      cadenceValue = null;
+    } else if (!/^\d+$/.test(cadenceRaw) || parseInt(cadenceRaw, 10) <= 0) {
+      cadenceError.textContent = "cadence must be a positive whole number of days";
+      cadenceInput.focus();
+      cadenceInput.select();
+      return; // invalid: leave the form open, save nothing
+    } else {
+      cadenceValue = parseInt(cadenceRaw, 10);
+    }
+    const currentCadence = (p.cadence_days === undefined) ? null : p.cadence_days;
+    if (cadenceValue !== currentCadence) record.cadence_days = cadenceValue;
+
+    if (Object.keys(record).length <= 1) {
+      // nothing changed: close the form, do not append a no-op event
+      cancel();
+      return;
+    }
+
+    saveBtn.disabled = true; cancelBtn.disabled = true;
+    const ok = await queueAndFlush([TB.events.person(record)], { render: false });
+    if (!ok) showGlobalBanner("backend unreachable — person edit is queued; Save retries");
+    PersonPageState.editing = null;
+    renderPersonView(p.id);
+  }
+
+  saveBtn.addEventListener("click", save);
+  cancelBtn.addEventListener("click", cancel);
+
+  function onKeydown(ev) {
+    if (ev.key === "Enter") { ev.preventDefault(); save(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
+  }
+  for (const input of [nameInput, orgInput, aliasesInput, tagsInput, linksInput, metInput, cadenceInput]) {
+    input.addEventListener("keydown", onKeydown);
+  }
+  nameInput.focus();
+
+  return form;
+}
+
+// Trimmed-text diff: unchanged (after trimming) -> untouched; changed-to-blank
+// -> null (clears the field on merge); else the trimmed value.
+function addTextFieldDiff(record, field, rawValue, currentValue) {
+  const trimmed = rawValue.trim();
+  const current = (currentValue === undefined || currentValue === null) ? "" : currentValue;
+  if (trimmed === current) return;
+  record[field] = trimmed === "" ? null : trimmed;
+}
+
+// Comma-split list diff: entries trimmed, empties dropped, compared
+// order-sensitively against the current array; changed-to-blank -> [].
+function addListFieldDiff(record, field, rawValue, currentValue) {
+  const list = rawValue.split(",").map((v) => v.trim()).filter(Boolean);
+  const current = currentValue || [];
+  const same = list.length === current.length && list.every((v, i) => v === current[i]);
+  if (same) return;
+  record[field] = list;
 }
 
 function personOpenLoopRow(s, item) {

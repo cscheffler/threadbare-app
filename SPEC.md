@@ -425,6 +425,14 @@ a person opens their page: the person record, their open loops, and every
 note they're tagged in — newest first, each linking back to its thread. Nav
 order across the top: Dashboard, Scratchpad, People.
 
+The person page is also where the record gets edited: an inline form (name,
+org, aliases, tags, links, how met, cadence) that emits a `person` event
+carrying only the fields that changed — the fold's field-wise merge does the
+rest. Clearing a field emits it as null (empty list for list fields). Person
+edits go through the same append pipeline as saves: queued, retried, safe
+with the backend down. The id stays frozen; renames change only the display
+name.
+
 ---
 
 ---

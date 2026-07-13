@@ -134,6 +134,18 @@ main#view { max-width: 900px; margin: 0 auto; padding: 0.5em 1em 3em; }
 }
 .person-card h1 { margin-top: 0.1em; }
 .person-meta-line { margin: 0.15em 0; }
+.person-edit-btn { margin-top: 0.4em; }
+
+.person-edit-form { display: flex; flex-direction: column; gap: 0.35em; }
+.person-edit-row { display: flex; align-items: center; gap: 0.6em; flex-wrap: wrap; }
+.person-edit-label { color: var(--muted); font-size: 0.9em; width: 6.5em; flex: 0 0 auto; }
+.person-edit-input {
+  font: inherit; flex: 1 1 auto; min-width: 10em; max-width: 320px;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.25em 0.5em;
+}
+.person-edit-error { color: var(--danger); font-size: 0.85em; }
+.person-edit-actions { display: flex; gap: 0.6em; margin-top: 0.4em; }
 
 .note-block { margin: 0.8em 0; }
 .house { color: var(--muted); font-style: italic; margin: 0.3em 0; }
