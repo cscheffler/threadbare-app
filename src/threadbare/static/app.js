@@ -99,6 +99,7 @@ function clearDraft() { localStorage.removeItem(LS_DRAFT); }
 // ---------------------------------------------------------------- app state
 
 const App = { serverEvents: [], events: [], folded: TB.fold([]), cursor: null, lastContactOK: null };
+const PeopleState = { filter: "" };
 const PadState = {
   selectedThreadId: null, newThread: null, textareaValue: "",
   queuedLock: null, sidebarTicks: new Set(), pendingRestore: null, draftNotice: null,
@@ -216,6 +217,8 @@ function renderRoute() {
   if (route === "pad") renderPad();
   else if (route === "thread" && parts[1]) renderThreadView(decodeURIComponent(parts[1]));
   else if (route === "item" && parts[1]) renderItemView(decodeURIComponent(parts[1]));
+  else if (route === "people") renderPeople();
+  else if (route === "person" && parts[1]) renderPersonView(decodeURIComponent(parts[1]));
   else renderDash();
 }
 
@@ -986,6 +989,149 @@ function historyLine(s, node, h) {
   if (action === "reopened") return d + " — reopened";
   if (h.due) return d + " — snoozed to " + h.due;
   return d + " — nudge switched off";
+}
+
+// ================================================================
+// People view (index + person page)
+// ================================================================
+
+// Filter lives in module state (not the DOM) so it survives re-renders
+// triggered from elsewhere (e.g. window focus). On every keystroke we only
+// rebuild the list container below the input — never the input itself —
+// so the element never loses focus or caret position.
+function renderPeople() {
+  const view = document.getElementById("view");
+  view.innerHTML = "";
+  view.appendChild(el("h1", { text: "People" }));
+
+  const filterInput = el("input", {
+    type: "text", id: "people-filter", class: "people-filter",
+    placeholder: "filter by name or alias", autocomplete: "off",
+  });
+  filterInput.value = PeopleState.filter;
+  view.appendChild(filterInput);
+
+  const listWrap = el("div", { id: "people-list-wrap" });
+  view.appendChild(listWrap);
+  renderPeopleList(listWrap);
+
+  filterInput.addEventListener("input", () => {
+    PeopleState.filter = filterInput.value;
+    renderPeopleList(listWrap);
+  });
+
+  filterInput.focus();
+}
+
+function renderPeopleList(container) {
+  container.innerHTML = "";
+  const s = App.folded;
+  const allPeople = Object.values(s.people);
+  if (!allPeople.length) {
+    container.appendChild(el("p", { class: "muted", text: "no people yet" }));
+    return;
+  }
+
+  const needle = PeopleState.filter.trim().toLowerCase();
+  const filtered = !needle ? allPeople : allPeople.filter((p) => {
+    const name = (p.name || "").toLowerCase();
+    if (name.indexOf(needle) !== -1) return true;
+    return (p.aliases || []).some((a) => (a || "").toLowerCase().indexOf(needle) !== -1);
+  });
+  if (!filtered.length) {
+    container.appendChild(el("p", { class: "muted", text: "no matches" }));
+    return;
+  }
+
+  const sorted = filtered.slice().sort((a, b) => {
+    const na = (a.name || a.id || "").toLowerCase();
+    const nb = (b.name || b.id || "").toLowerCase();
+    return na < nb ? -1 : na > nb ? 1 : 0;
+  });
+  const list = el("ul", { class: "plain-list people-list" });
+  for (const p of sorted) list.appendChild(personIndexRow(p));
+  container.appendChild(list);
+}
+
+function personIndexRow(p) {
+  const li = el("li");
+  li.appendChild(el("a", { href: "#/person/" + encodeURIComponent(p.id), text: p.name || p.id }));
+  const bits = [];
+  if (p.org) bits.push(p.org);
+  if (p.tags && p.tags.length) bits.push(p.tags.join(", "));
+  if (p.cadence_days !== null && p.cadence_days !== undefined) bits.push("cadence " + p.cadence_days + "d");
+  if (p.last_contact) bits.push("last " + dateOf(p.last_contact));
+  if (bits.length) {
+    li.appendChild(document.createTextNode(" — "));
+    li.appendChild(el("span", { class: "muted", text: bits.join(" · ") }));
+  }
+  return li;
+}
+
+function renderPersonView(pid) {
+  const view = document.getElementById("view");
+  view.innerHTML = "";
+  const s = App.folded;
+  const p = s.people[pid];
+  if (!p) {
+    view.appendChild(el("h1", { text: pid }));
+    view.appendChild(el("p", { class: "muted", text: "person not found" }));
+    return;
+  }
+
+  const card = el("div", { class: "person-card" });
+  card.appendChild(el("h1", { text: p.name || p.id }));
+  const metaLines = [];
+  if (p.aliases && p.aliases.length) metaLines.push("aka " + p.aliases.join(", "));
+  if (p.org) metaLines.push(p.org);
+  if (p.tags && p.tags.length) metaLines.push("tags: " + p.tags.join(", "));
+  if (p.met_context) metaLines.push("met: " + p.met_context);
+  if (p.cadence_days !== null && p.cadence_days !== undefined) metaLines.push("cadence: " + p.cadence_days + "d");
+  if (p.last_contact) metaLines.push("last contact: " + dateOf(p.last_contact));
+  for (const line of metaLines) card.appendChild(el("p", { class: "muted person-meta-line", text: line }));
+  view.appendChild(card);
+
+  view.appendChild(el("h2", { text: "Open loops" }));
+  const items = s.openItems().filter((i) => s.itemPerson(i) === pid);
+  if (!items.length) view.appendChild(el("p", { class: "muted", text: "no open items" }));
+  else {
+    const list = el("div", { class: "row-list" });
+    for (const item of items) list.appendChild(personOpenLoopRow(s, item));
+    view.appendChild(list);
+  }
+
+  view.appendChild(el("h2", { text: "Notes" }));
+  // Newest first: this is a lookup surface ("what have I told/heard from
+  // this person"), not the chronological thread arc — the opposite sort
+  // from renderThreadView.
+  const notes = s.notes
+    .filter((n) => (n.people || []).includes(pid))
+    .slice()
+    .sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+  if (!notes.length) view.appendChild(el("p", { class: "muted", text: "no notes yet" }));
+  else for (const n of notes) view.appendChild(personNoteBlock(s, n));
+}
+
+function personOpenLoopRow(s, item) {
+  const row = el("div", { class: "loop-row" });
+  const mark = item.kind === "commit" ? "›" : "?";
+  row.appendChild(el("span", { class: "mark", text: mark }));
+  row.appendChild(el("a", { href: "#/item/" + encodeURIComponent(item.id), class: "item-text", text: item.text }));
+  row.appendChild(el("span", { class: "muted", text: " " + loopDatesLabel(s, item) }));
+  return row;
+}
+
+function personNoteBlock(s, n) {
+  const thread = s.threads[n.thread || ""];
+  const tname = thread ? (thread.title || thread.id) : (n.thread || "?");
+  const block = el("div", { class: "last-note" });
+  const heading = el("div", { class: "last-note-heading" });
+  heading.appendChild(document.createTextNode(dateOf(n.ts) + " — "));
+  heading.appendChild(el("a", { href: "#/thread/" + encodeURIComponent(n.thread || ""), text: tname }));
+  block.appendChild(heading);
+  const body = (n.body_clean || n.body || "").replace(/\s+$/, "");
+  block.appendChild(el("pre", { class: "note-body", text: body }));
+  return block;
 }
 
 // ================================================================

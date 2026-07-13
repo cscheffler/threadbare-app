@@ -121,6 +121,20 @@ main#view { max-width: 900px; margin: 0 auto; padding: 0.5em 1em 3em; }
 .confirm-ts-error { color: var(--danger); font-size: 0.85em; }
 .item-due-label { color: var(--muted); }
 
+.people-filter {
+  display: block; width: 100%; max-width: 360px; font: inherit;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.35em 0.6em; margin: 0.4em 0 0.9em;
+}
+.people-list li { margin-bottom: 0.4em; }
+
+.person-card {
+  background: var(--panel-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.6em 1em 0.8em; margin-bottom: 0.6em;
+}
+.person-card h1 { margin-top: 0.1em; }
+.person-meta-line { margin: 0.15em 0; }
+
 .note-block { margin: 0.8em 0; }
 .house { color: var(--muted); font-style: italic; margin: 0.3em 0; }
 hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }

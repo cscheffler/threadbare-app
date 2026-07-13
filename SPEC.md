@@ -415,6 +415,14 @@ One item, its entire chain: opened → revised → revised → closed, with date
 comments. Cheap once `supersedes` pointers exist. This is what you want when
 someone says "wait, what did you agree to?"
 
+### 6. People (on demand)
+
+A filterable index of everyone in the log. A text input at the top filters
+the list as you type (case-insensitive, against names and aliases). Clicking
+a person opens their page: the person record, their open loops, and every
+note they're tagged in — newest first, each linking back to its thread. Nav
+order across the top: Dashboard, Scratchpad, People.
+
 ---
 
 ---
