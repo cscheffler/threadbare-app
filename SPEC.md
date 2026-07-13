@@ -326,9 +326,12 @@ their thread view.
 ### 2. Scratchpad (where the user lives during meetings)
 
 - A text area. Just a text area.
-- Header: thread selector. Selecting a thread shows **the last note from that
-  thread** above the blank input. This is the "digital memory" bit — see what
-  you said last time before you start typing.
+- Header: thread selector. The input and save button sit at the top; below
+  them, the **last five notes from that thread**, most recent first, ordered
+  by event timestamp (not append order — backdated notes sort into place).
+  "Show more" reveals five more, "Show all" the rest; both disabled when
+  nothing is left. This is the "digital memory" bit — see what you said last
+  time, or the whole arc, before you start typing.
 - Sidebar: open loops for the people on this thread, each with a checkbox.
   Ticking one queues a `close` event, applied at save.
 - No parsing, no network calls, no popups while typing.

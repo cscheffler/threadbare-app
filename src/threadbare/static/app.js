@@ -92,6 +92,7 @@ const App = { serverEvents: [], events: [], folded: TB.fold([]), cursor: null, l
 const PadState = {
   selectedThreadId: null, newThread: null, textareaValue: "",
   queuedLock: null, sidebarTicks: new Set(), pendingRestore: null, draftNotice: null,
+  visibleCount: 5, // how many of the selected thread's notes are shown; resets to 5 on thread change / save
 };
 
 function recomputeFolded() {
@@ -399,6 +400,49 @@ function applyPendingDraftRestore() {
   PadState.draftNotice = "restored draft from " + hhmm;
 }
 
+// Note history for the selected thread: sorted by event ts descending (not
+// append order — a backdated note must sort into place by its own ts).
+// Array#sort is stable, so notes sharing a ts keep their relative log order,
+// which is a deterministic tiebreak without needing a secondary key.
+// Renders from App.folded only — no network call, so pagination is instant
+// and works offline / with queued-but-unsynced notes included.
+function renderNoteHistory() {
+  const wrap = el("div", { class: "note-history" });
+  wrap.appendChild(el("h3", { text: "Notes" }));
+
+  const notes = PadState.selectedThreadId
+    ? App.folded.notes.filter((n) => n.thread === PadState.selectedThreadId)
+    : [];
+  const sorted = notes.slice().sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+  const total = sorted.length;
+  const visible = sorted.slice(0, Math.min(PadState.visibleCount, total));
+
+  if (!total) {
+    wrap.appendChild(el("p", { class: "muted", text: "no notes yet" }));
+  } else {
+    for (const n of visible) {
+      const block = el("div", { class: "last-note" });
+      block.appendChild(el("div", { class: "last-note-heading", text: dateOf(n.ts) }));
+      block.appendChild(el("pre", { class: "note-body", text: n.body_clean || n.body || "" }));
+      wrap.appendChild(block);
+    }
+  }
+
+  const remaining = total - visible.length;
+  const btnRow = el("div", { class: "note-history-actions" });
+  const showMoreBtn = el("button", { class: "btn-small", text: "Show more" });
+  const showAllBtn = el("button", { class: "btn-small", text: "Show all" });
+  showMoreBtn.disabled = remaining <= 0;
+  showAllBtn.disabled = remaining <= 0;
+  showMoreBtn.addEventListener("click", () => { PadState.visibleCount += 5; renderPad(); });
+  showAllBtn.addEventListener("click", () => { PadState.visibleCount = Infinity; renderPad(); });
+  btnRow.appendChild(showMoreBtn);
+  btnRow.appendChild(showAllBtn);
+  wrap.appendChild(btnRow);
+
+  return wrap;
+}
+
 function renderPad() {
   const view = document.getElementById("view");
   view.innerHTML = "";
@@ -413,6 +457,7 @@ function renderPad() {
     // thread vanished from state (shouldn't normally happen); fall back
     PadState.selectedThreadId = threads.length ? threads[0].id : null;
     if (!PadState.selectedThreadId) PadState.newThread = { title: "", kind: "ad-hoc" };
+    PadState.visibleCount = 5;
   }
 
   const layout = el("div", { class: "pad-layout" });
@@ -452,23 +497,13 @@ function renderPad() {
       PadState.selectedThreadId = select.value;
     }
     PadState.sidebarTicks.clear();
+    PadState.visibleCount = 5;
     renderPad();
   });
   titleInput.addEventListener("input", () => { if (PadState.newThread) PadState.newThread.title = titleInput.value; });
   kindSelect.addEventListener("change", () => { if (PadState.newThread) PadState.newThread.kind = kindSelect.value; });
 
   main.appendChild(header);
-
-  if (PadState.selectedThreadId) {
-    const notes = App.folded.notes.filter((n) => n.thread === PadState.selectedThreadId);
-    if (notes.length) {
-      const last = notes[notes.length - 1];
-      const preview = el("div", { class: "last-note" });
-      preview.appendChild(el("div", { class: "last-note-heading", text: "Last note — " + dateOf(last.ts) }));
-      preview.appendChild(el("pre", { class: "note-body", text: last.body_clean || last.body || "" }));
-      main.appendChild(preview);
-    }
-  }
 
   if (PadState.draftNotice) {
     main.appendChild(el("div", { class: "notice", text: PadState.draftNotice }));
@@ -509,6 +544,8 @@ function renderPad() {
   actionsRow.appendChild(el("span", { class: "hint", text: " ⌘/Ctrl+Enter" }));
   actionsRow.appendChild(el("span", { id: "pad-status", class: "notice" }));
   main.appendChild(actionsRow);
+
+  main.appendChild(renderNoteHistory());
 
   layout.appendChild(main);
 
@@ -559,22 +596,27 @@ async function attemptSave() {
 
 async function finalizeSave(newEvents, lockBody) {
   hideGlobalBanner();
-  if (lockBody !== null) { PadState.queuedLock = lockBody; clearDraft(); PadState.sidebarTicks.clear(); }
+  if (lockBody !== null) {
+    // A real save (not just a queue-flush retry): the new note already landed
+    // in App.folded (queued or not), so start the history view fresh at the top.
+    PadState.queuedLock = lockBody; clearDraft(); PadState.sidebarTicks.clear(); PadState.visibleCount = 5;
+  }
   const ok = await queueAndFlush(newEvents, { render: false });
-  if (ok) {
-    if (lockBody !== null) {
-      PadState.queuedLock = null;
-      const ta = document.getElementById("pad-textarea");
-      if (ta && ta.value === lockBody) {
-        ta.value = "";
-        PadState.textareaValue = "";
-      }
+  if (ok && lockBody !== null) {
+    PadState.queuedLock = null;
+    const ta = document.getElementById("pad-textarea");
+    if (ta && ta.value === lockBody) {
+      ta.value = "";
+      PadState.textareaValue = "";
     }
-    showPadStatus("saved");
-  } else {
+  }
+  if (!ok) {
     showGlobalBanner("backend unreachable — note is queued; Save retries");
   }
   renderPad();
+  // after the rebuild — renderPad recreates #pad-status, wiping anything
+  // written into the old DOM
+  if (ok) showPadStatus("saved");
 }
 
 // ================================================================
