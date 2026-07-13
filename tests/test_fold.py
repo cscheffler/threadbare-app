@@ -63,6 +63,25 @@ def test_snooze_to_never_removes_from_due():
     assert s.effective_due(s.items["itm_x"]) is None
 
 
+def test_thread_seen_range_min_max_with_backdated_note():
+    # ev_2 (later ts) is appended before ev_3 (earlier ts, backdated). The
+    # fold must not let write order drag first_seen/last_seen the wrong
+    # way: first_seen is the min ts seen, last_seen the max, regardless of
+    # the order events arrive in the log.
+    events = [
+        {"id": "ev_1", "ts": "2026-06-10T09:00:00Z", "type": "note",
+         "thread": "thr_x", "people": [], "body": "first", "items": []},
+        {"id": "ev_2", "ts": "2026-06-20T09:00:00Z", "type": "note",
+         "thread": "thr_x", "people": [], "body": "second", "items": []},
+        {"id": "ev_3", "ts": "2026-06-05T09:00:00Z", "type": "note",
+         "thread": "thr_x", "people": [], "body": "backdated", "items": []},
+    ]
+    s = fold(events)
+    t = s.threads["thr_x"]
+    assert t.first_seen == "2026-06-05T09:00:00Z"
+    assert t.last_seen == "2026-06-20T09:00:00Z"
+
+
 def test_reopen_restores_open(state):
     b = state.items["itm_b"]
     assert b.status == "open"

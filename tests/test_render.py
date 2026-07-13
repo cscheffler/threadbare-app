@@ -1,5 +1,6 @@
 from datetime import date
 
+from threadbare.fold import fold
 from threadbare.render import (render_closed, render_dash, render_due,
                                render_item, render_open, render_thread)
 
@@ -16,6 +17,21 @@ def test_thread_view(state):
     assert "---" in out
     # events from other threads stay out
     assert "reimbursement" not in out
+
+
+def test_thread_view_backdated_note_sorts_chronologically():
+    # ev_3 is appended last (log order) but backdated to slot between the
+    # other two notes — the render is chronological by ts, not log order.
+    events = [
+        {"id": "ev_1", "ts": "2026-06-01T09:00:00Z", "type": "note",
+         "thread": "thr_x", "people": [], "body": "AAA first note", "items": []},
+        {"id": "ev_2", "ts": "2026-06-20T09:00:00Z", "type": "note",
+         "thread": "thr_x", "people": [], "body": "CCC third note", "items": []},
+        {"id": "ev_3", "ts": "2026-06-10T09:00:00Z", "type": "note",
+         "thread": "thr_x", "people": [], "body": "BBB backdated note", "items": []},
+    ]
+    out = render_thread(fold(events), "thr_x")
+    assert out.index("AAA") < out.index("BBB") < out.index("CCC")
 
 
 def test_thread_view_unknown_thread_is_empty(state):

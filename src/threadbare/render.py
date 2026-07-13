@@ -23,20 +23,23 @@ def person_name(state: State, pid: str | None) -> str:
 def render_thread(state: State, thread_id: str) -> str:
     thread = state.threads.get(thread_id)
     title = (thread.title if thread else "") or thread_id
-    entries: list[tuple[str, str]] = []  # (kind, text)
+    entries: list[tuple[str, str, str]] = []  # (ts, kind, text)
     for e in state.events:
         t = e.get("type")
         if t == "note" and e.get("thread") == thread_id:
-            entries.append(("note", _note_block(state, e, thread)))
+            entries.append((e["ts"], "note", _note_block(state, e, thread)))
         elif t in ("close", "revise", "reopen", "nudge"):
             line = _house_line(state, e, thread_id)
             if line:
-                entries.append(("house", line))
+                entries.append((e["ts"], "house", line))
     if not entries:
         return f"# {title}\n\n*(no events)*\n"
+    # Chronological, not log order — a backdated note must slot into its
+    # place in the arc. sort() is stable, so equal-ts entries keep log order.
+    entries.sort(key=lambda entry: entry[0])
     blocks = [f"# {title}"]
     prev = None
-    for kind, text in entries:
+    for _, kind, text in entries:
         if prev is not None and kind != prev:
             blocks.append("---")
         blocks.append(text)

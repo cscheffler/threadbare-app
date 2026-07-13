@@ -104,6 +104,16 @@ main#view { max-width: 900px; margin: 0 auto; padding: 0.5em 1em 3em; }
 .confirm-inline { display: inline-flex; align-items: center; gap: 0.3em; }
 .confirm-actions { display: flex; gap: 0.6em; margin-top: 1em; }
 
+.confirm-ts-row { display: flex; align-items: baseline; gap: 0.5em; flex-wrap: wrap; }
+.confirm-ts-label { color: var(--muted); font-size: 0.9em; }
+.confirm-ts-input {
+  font: inherit; font-family: var(--mono); font-size: 0.9em;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.2em 0.5em; min-width: 15em;
+}
+.confirm-ts-error { color: var(--danger); font-size: 0.85em; }
+.item-due-label { color: var(--muted); }
+
 .note-block { margin: 0.8em 0; }
 .house { color: var(--muted); font-style: italic; margin: 0.3em 0; }
 hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }

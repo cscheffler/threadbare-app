@@ -180,8 +180,8 @@ def _apply_note(s: State, e: Event) -> None:
     tid = e.get("thread")
     if tid:
         t = s.threads.setdefault(tid, Thread(id=tid, title=tid))
-        t.first_seen = t.first_seen or e["ts"]
-        t.last_seen = e["ts"]
+        t.first_seen = min(t.first_seen, e["ts"]) if t.first_seen else e["ts"]
+        t.last_seen = max(t.last_seen, e["ts"]) if t.last_seen else e["ts"]
     for pid in e.get("people", []):
         p = s.people.setdefault(pid, Person(id=pid, name=pid))
         if p.last_contact is None or e["ts"] > p.last_contact:

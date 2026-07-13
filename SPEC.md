@@ -358,6 +358,12 @@ The step does, in order:
    ticked in the sidebar or matched by `>>`. **IDs are generated client-side**
    before the append call, so retries are idempotent.
 
+The step also shows an editable **timestamp** (ISO 8601 with offset,
+prefilled with now) so a note can be entered after the fact. Every event the
+save emits carries it, normalised to UTC; relative nudge specs resolve
+against its date. The log stays append-only — a backdated note simply
+appends with an older `ts`, and chronological views sort by `ts`.
+
 Every step must be skippable with one keystroke. A user in a hurry should be
 able to hit save-save-save and still get a correct (if unenriched) event.
 

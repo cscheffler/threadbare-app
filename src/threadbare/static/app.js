@@ -583,13 +583,24 @@ async function finalizeSave(newEvents, lockBody) {
 
 function openConfirmPanel(body) {
   const s = App.folded;
-  const todayISO = TB.todayISO();
   const parsed = TB.parse(body);
 
   const isNewThread = !!PadState.newThread;
   const tid = isNewThread ? TB.threadId(PadState.newThread.title) : PadState.selectedThreadId;
   const existingThread = !isNewThread ? s.threads[tid] : null;
   const threadPeople = existingThread ? threadPeopleIds(tid) : [];
+
+  // ---- when (editable timestamp; item due dates resolve against its date) ----
+  const tsSection = el("div", { class: "confirm-section confirm-ts-row" });
+  const tsLabel = el("label", { class: "confirm-ts-label", for: "confirm-ts-input", text: "when" });
+  const tsInput = el("input", {
+    type: "text", id: "confirm-ts-input", class: "confirm-ts-input", autocomplete: "off",
+  });
+  tsInput.value = TB.nowLocalISO();
+  const tsError = el("span", { class: "confirm-ts-error" });
+  tsSection.appendChild(tsLabel);
+  tsSection.appendChild(tsInput);
+  tsSection.appendChild(tsError);
 
   // ---- people ----
   const personRows = []; // {name, get(): pid|null, create(): record|null}
@@ -627,22 +638,37 @@ function openConfirmPanel(body) {
   }
 
   // ---- items ----
-  const itemRows = []; // {parsed, due, checkbox}
+  const itemRows = []; // {parsed, checkbox, dueSpan}
   const itemsSection = el("div", { class: "confirm-section" });
   itemsSection.appendChild(el("h3", { text: "Items" }));
   if (!parsed.items.length) itemsSection.appendChild(el("p", { class: "muted", text: "no > or ? lines" }));
   for (const pi of parsed.items) {
-    const due = TB.resolveDue(pi.due_spec, todayISO, TB.DEFAULT_NUDGE_DAYS);
     const cb = el("input", { type: "checkbox" });
     cb.checked = true;
     const mark = pi.kind === "commit" ? "›" : "?";
-    const dueLabel = due ? "nudge " + due : "never";
     const row = el("label", { class: "confirm-row" });
     row.appendChild(cb);
-    row.appendChild(document.createTextNode(" " + mark + " " + pi.text + " — " + dueLabel));
+    row.appendChild(document.createTextNode(" " + mark + " " + pi.text + " — "));
+    const dueSpan = el("span", { class: "item-due-label" });
+    row.appendChild(dueSpan);
     itemsSection.appendChild(row);
-    itemRows.push({ parsed: pi, due: due, checkbox: cb });
+    itemRows.push({ parsed: pi, checkbox: cb, dueSpan: dueSpan });
   }
+
+  // Re-derives every item's previewed nudge date from the "when" field's
+  // date — resolveDue's base is the note's date, not wall-clock today.
+  function refreshItemDueLabels(localDateISO) {
+    for (const row of itemRows) {
+      const due = TB.resolveDue(row.parsed.due_spec, localDateISO, TB.DEFAULT_NUDGE_DAYS);
+      row.dueSpan.textContent = due ? "nudge " + due : "never";
+    }
+  }
+  refreshItemDueLabels(TB.parseTimestamp(tsInput.value).localDate);
+  tsInput.addEventListener("input", () => {
+    tsError.textContent = "";
+    const result = TB.parseTimestamp(tsInput.value);
+    if (result.ok) refreshItemDueLabels(result.localDate);
+  });
 
   // ---- >> closes (fuzzy-matched against open items for this note's people) ----
   const defaultMentionMap = {};
@@ -700,6 +726,7 @@ function openConfirmPanel(body) {
   // ---- panel chrome ----
   const panel = el("div", { class: "confirm-panel", role: "dialog" });
   panel.appendChild(el("h2", { text: isNewThread ? "New thread: " + PadState.newThread.title : (existingThread ? existingThread.title : tid) }));
+  panel.appendChild(tsSection);
   panel.appendChild(peopleSection);
   panel.appendChild(itemsSection);
   panel.appendChild(closesSection);
@@ -729,6 +756,13 @@ function openConfirmPanel(body) {
   confirmBtn.addEventListener("click", doConfirm);
 
   async function doConfirm() {
+    const parsedTs = TB.parseTimestamp(tsInput.value);
+    if (!parsedTs.ok) {
+      tsError.textContent = parsedTs.error;
+      tsInput.focus();
+      tsInput.select();
+      return; // invalid: leave the panel open, emit nothing
+    }
     cleanup();
 
     const mentionMap = {};
@@ -748,7 +782,8 @@ function openConfirmPanel(body) {
       let owner = null;
       if (pi.mention && mentionMap[pi.mention.toLowerCase()]) owner = mentionMap[pi.mention.toLowerCase()];
       else if (pi.kind === "commit") owner = "me";
-      itemsPayload.push({ id: TB.newItemId(), kind: pi.kind, text: pi.text, owner: owner, due: row.due });
+      const due = TB.resolveDue(pi.due_spec, parsedTs.localDate, TB.DEFAULT_NUDGE_DAYS);
+      itemsPayload.push({ id: TB.newItemId(), kind: pi.kind, text: pi.text, owner: owner, due: due });
     }
 
     const closeIds = [];
@@ -759,11 +794,14 @@ function openConfirmPanel(body) {
 
     const pending = [];
     if (isNewThread) {
-      pending.push(TB.events.thread({ id: tid, title: PadState.newThread.title, kind: PadState.newThread.kind, people: [] }));
+      pending.push(TB.events.thread(
+        { id: tid, title: PadState.newThread.title, kind: PadState.newThread.kind, people: [] },
+        parsedTs.ts
+      ));
     }
-    for (const rec of creations) pending.push(TB.events.person(rec));
-    pending.push(TB.events.note(tid, peopleList, body, itemsPayload));
-    for (const itemId of closeIds) pending.push(TB.events.close(itemId));
+    for (const rec of creations) pending.push(TB.events.person(rec, parsedTs.ts));
+    pending.push(TB.events.note(tid, peopleList, body, itemsPayload, null, parsedTs.ts));
+    for (const itemId of closeIds) pending.push(TB.events.close(itemId, undefined, parsedTs.ts));
 
     if (isNewThread) { PadState.newThread = null; PadState.selectedThreadId = tid; }
 
@@ -786,16 +824,19 @@ function renderThreadView(tid) {
   const entries = [];
   for (const e of s.events) {
     if (e.type === "note" && e.thread === tid) {
-      entries.push({ kind: "note", node: noteBlock(s, e, thread) });
+      entries.push({ ts: e.ts, kind: "note", node: noteBlock(s, e, thread) });
     } else if (e.type === "close" || e.type === "revise" || e.type === "reopen" || e.type === "nudge") {
       const node = houseLine(s, e, tid);
-      if (node) entries.push({ kind: "house", node: node });
+      if (node) entries.push({ ts: e.ts, kind: "house", node: node });
     }
   }
   if (!entries.length) {
     view.appendChild(el("p", { class: "muted", text: "(no events)" }));
     return;
   }
+  // Chronological, not log order — a backdated note must slot into its place
+  // in the arc. Array#sort is stable, so equal-ts entries keep log order.
+  entries.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
   let prevKind = null;
   for (const entry of entries) {
     if (prevKind !== null && entry.kind !== prevKind) view.appendChild(el("hr"));

@@ -8,6 +8,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
+// Pinned so the "no offset means local time" parseTimestamp tests (and the
+// nowLocalISO round-trip test) aren't machine-dependent. Europe/London is
+// deliberately non-UTC and DST-observing (BST in July), which is exactly
+// the case that a naive toISOString()-based implementation gets wrong.
+process.env.TZ = "Europe/London";
+
 const require = createRequire(import.meta.url);
 const TB = require("../src/threadbare/static/core.js");
 
@@ -268,6 +274,136 @@ test("events.note / events.close carry the right fields, omit the rest", () => {
 
   const c2 = TB.events.close("itm_x", "done");
   assert.equal(c2.comment, "done");
+});
+
+test("events.*: default ts is now when omitted", () => {
+  const before = Date.now();
+  const n = TB.events.note("thr_x", [], "hi", []);
+  const after = Date.now();
+  const ms = Date.parse(n.ts);
+  assert.ok(ms >= before - 1000 && ms <= after + 1000);
+});
+
+test("events.*: every constructor accepts an optional trailing ts override", () => {
+  const ts = "2026-01-02T03:04:05Z";
+  assert.equal(TB.events.note("thr_x", ["per_a"], "hi", [], null, ts).ts, ts);
+  assert.equal(TB.events.close("itm_x", undefined, ts).ts, ts);
+  assert.equal(TB.events.reopen("itm_x", ts).ts, ts);
+  assert.equal(TB.events.nudge("itm_x", "2026-02-01", undefined, ts).ts, ts);
+  assert.equal(TB.events.person({ id: "per_x", name: "X" }, ts).ts, ts);
+  assert.equal(TB.events.thread({ id: "thr_x", title: "X" }, ts).ts, ts);
+});
+
+// ---------------------------------------------------------------- fold: backdating (out-of-order ts)
+
+test("fold: thread first_seen/last_seen are min/max over ts, not write order", () => {
+  // ev_3 arrives last in the log but is backdated earlier than both prior
+  // notes. first_seen must become the min ts seen and last_seen the max,
+  // regardless of the order events were appended in.
+  const events = [
+    { id: "ev_1", ts: "2026-06-10T09:00:00Z", type: "note", thread: "thr_x", people: [], body: "first", items: [] },
+    { id: "ev_2", ts: "2026-06-20T09:00:00Z", type: "note", thread: "thr_x", people: [], body: "second", items: [] },
+    { id: "ev_3", ts: "2026-06-05T09:00:00Z", type: "note", thread: "thr_x", people: [], body: "backdated", items: [] },
+  ];
+  const s = TB.fold(events);
+  const t = s.threads["thr_x"];
+  assert.equal(t.first_seen, "2026-06-05T09:00:00Z");
+  assert.equal(t.last_seen, "2026-06-20T09:00:00Z");
+});
+
+test("fold: person last_contact is max-guarded against an out-of-order backdated note", () => {
+  const events = [
+    { id: "ev_1", ts: "2026-06-20T09:00:00Z", type: "note", thread: "thr_x", people: ["per_a"], body: "later", items: [] },
+    { id: "ev_2", ts: "2026-06-05T09:00:00Z", type: "note", thread: "thr_x", people: ["per_a"], body: "backdated", items: [] },
+  ];
+  const s = TB.fold(events);
+  assert.equal(s.people["per_a"].last_contact, "2026-06-20T09:00:00Z");
+});
+
+// ---------------------------------------------------------------- timestamp entry (save-step "when" field)
+
+test("nowLocalISO: shape, and round-trips via parseTimestamp to ~now in the pinned zone", () => {
+  const before = Date.now();
+  const iso = TB.nowLocalISO();
+  const after = Date.now();
+  assert.match(iso, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/);
+
+  // Never toISOString() for this: cross-check the offset independently,
+  // straight off getTimezoneOffset(), rather than trusting core.js's own math.
+  const now = new Date();
+  const offMin = -now.getTimezoneOffset();
+  const sign = offMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offMin);
+  const expectedOffset = sign + String(Math.floor(abs / 60)).padStart(2, "0") + ":" + String(abs % 60).padStart(2, "0");
+  assert.ok(iso.endsWith(expectedOffset), `expected ${iso} to end with ${expectedOffset}`);
+
+  const parsed = TB.parseTimestamp(iso);
+  assert.equal(parsed.ok, true);
+  const parsedMs = Date.parse(parsed.ts);
+  assert.ok(parsedMs >= before - 1000 && parsedMs <= after + 1000);
+  const expectedLocalDate = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+  assert.equal(parsed.localDate, expectedLocalDate);
+});
+
+test("parseTimestamp: Z passthrough", () => {
+  const r = TB.parseTimestamp("2026-07-13T09:42:00Z");
+  assert.deepEqual(r, { ok: true, ts: "2026-07-13T09:42:00Z", localDate: "2026-07-13" });
+});
+
+test("parseTimestamp: missing seconds default to :00", () => {
+  const r = TB.parseTimestamp("2026-07-13T09:42Z");
+  assert.equal(r.ok, true);
+  assert.equal(r.ts, "2026-07-13T09:42:00Z");
+});
+
+test("parseTimestamp: numeric offset converts to correct UTC, with and without colon", () => {
+  assert.equal(TB.parseTimestamp("2026-07-13T09:42:00+01:00").ts, "2026-07-13T08:42:00Z");
+  assert.equal(TB.parseTimestamp("2026-07-13T09:42:00+0100").ts, "2026-07-13T08:42:00Z");
+  assert.equal(TB.parseTimestamp("2026-07-13T09:42:00-05:00").ts, "2026-07-13T14:42:00Z");
+});
+
+test("parseTimestamp: no offset is interpreted as local time (pinned TZ)", () => {
+  // Europe/London in July is BST (UTC+1) — same instant as the +01:00 case.
+  const r = TB.parseTimestamp("2026-07-13T09:42:00");
+  assert.equal(r.ok, true);
+  assert.equal(r.ts, "2026-07-13T08:42:00Z");
+  assert.equal(r.localDate, "2026-07-13");
+});
+
+test("parseTimestamp: localDate is the date as typed, not the UTC-shifted date", () => {
+  // Local midnight-thirty at +05:00 lands on the previous UTC day; localDate
+  // must still read "the note's date" as the human typed it.
+  const r = TB.parseTimestamp("2026-07-13T00:30:00+05:00");
+  assert.equal(r.ok, true);
+  assert.equal(r.ts, "2026-07-12T19:30:00Z");
+  assert.equal(r.localDate, "2026-07-13");
+});
+
+test("parseTimestamp: trims surrounding whitespace", () => {
+  const r = TB.parseTimestamp("  2026-07-13T09:42:00Z  ");
+  assert.equal(r.ok, true);
+  assert.equal(r.ts, "2026-07-13T09:42:00Z");
+});
+
+test("parseTimestamp: garbage is rejected with a short error", () => {
+  for (const bad of ["banana", "", "   ", "2026-07-13", "13/07/2026 09:42", "2026-07-13 09:42:00"]) {
+    const r = TB.parseTimestamp(bad);
+    assert.equal(r.ok, false, `expected ${JSON.stringify(bad)} to be rejected`);
+    assert.equal(typeof r.error, "string");
+    assert.ok(r.error.length > 0 && r.error.length < 80);
+  }
+});
+
+test("parseTimestamp: impossible calendar dates are rejected, not rolled over", () => {
+  // Naive `new Date(2026, 1, 30)` silently becomes March 2 — must not happen.
+  assert.equal(TB.parseTimestamp("2026-02-30T10:00:00").ok, false);
+  assert.equal(TB.parseTimestamp("2026-02-30T10:00:00Z").ok, false);
+  assert.equal(TB.parseTimestamp("2026-04-31T10:00:00Z").ok, false);
+  assert.equal(TB.parseTimestamp("2026-07-13T25:00:00Z").ok, false); // bad hour
+  assert.equal(TB.parseTimestamp("2026-07-13T09:60:00Z").ok, false); // bad minute
+  // 2024 is a leap year, 2026 is not: Feb 29 valid one year, not the other.
+  assert.equal(TB.parseTimestamp("2024-02-29T10:00:00Z").ok, true);
+  assert.equal(TB.parseTimestamp("2026-02-29T10:00:00Z").ok, false);
 });
 
 // ---------------------------------------------------------------- cli.py: resolve_person

@@ -312,8 +312,8 @@
     if (tid) {
       if (!state.threads[tid]) state.threads[tid] = newThread(tid, tid);
       const t = state.threads[tid];
-      t.first_seen = t.first_seen || e.ts;
-      t.last_seen = e.ts;
+      t.first_seen = t.first_seen ? (e.ts < t.first_seen ? e.ts : t.first_seen) : e.ts;
+      t.last_seen = t.last_seen ? (e.ts > t.last_seen ? e.ts : t.last_seen) : e.ts;
     }
     for (const pid of e.people || []) {
       if (!state.people[pid]) state.people[pid] = newPerson(pid, pid);
@@ -481,12 +481,12 @@
     return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   }
 
-  function _base(type) {
-    return { id: newEventId(), ts: nowTs(), type: type };
+  function _base(type, ts) {
+    return { id: newEventId(), ts: ts || nowTs(), type: type };
   }
 
-  function eventNote(thread, people, body, items, bodyClean) {
-    const e = _base("note");
+  function eventNote(thread, people, body, items, bodyClean, ts) {
+    const e = _base("note", ts);
     e.thread = thread;
     e.people = people;
     e.body = body;
@@ -495,37 +495,127 @@
     return e;
   }
 
-  function eventClose(itemId, comment) {
-    const e = _base("close");
+  function eventClose(itemId, comment, ts) {
+    const e = _base("close", ts);
     e.closes = itemId;
     if (comment) e.comment = comment;
     return e;
   }
 
-  function eventReopen(itemId) {
-    const e = _base("reopen");
+  function eventReopen(itemId, ts) {
+    const e = _base("reopen", ts);
     e.reopens = itemId;
     return e;
   }
 
-  function eventNudge(itemId, due, comment) {
-    const e = _base("nudge");
+  function eventNudge(itemId, due, comment, ts) {
+    const e = _base("nudge", ts);
     e.item = itemId;
     e.due = due === undefined ? null : due;
     if (comment) e.comment = comment;
     return e;
   }
 
-  function eventPerson(record) {
-    const e = _base("person");
+  function eventPerson(record, ts) {
+    const e = _base("person", ts);
     e.person = record;
     return e;
   }
 
-  function eventThread(record) {
-    const e = _base("thread");
+  function eventThread(record, ts) {
+    const e = _base("thread", ts);
     e.thread = record;
     return e;
+  }
+
+  // ================================================================
+  // timestamp entry — save-step "when" field (app.js confirmation panel)
+  // ================================================================
+
+  function _pad(n, len) {
+    return String(n).padStart(len === undefined ? 2 : len, "0");
+  }
+
+  /** "+01:00" / "-05:00" style offset from a Date#getTimezoneOffset() value. */
+  function _offsetString(tzOffsetMinutes) {
+    const sign = tzOffsetMinutes > 0 ? "-" : "+";
+    const abs = Math.abs(tzOffsetMinutes);
+    return sign + _pad(Math.floor(abs / 60)) + ":" + _pad(abs % 60);
+  }
+
+  /**
+   * Current local wall-clock time as ISO 8601 with the numeric UTC offset,
+   * seconds precision — e.g. "2026-07-13T09:42:00+01:00". Never use
+   * toISOString() for this: that reports UTC, not local wall-clock time.
+   */
+  function nowLocalISO() {
+    const d = new Date();
+    return (
+      d.getFullYear() + "-" + _pad(d.getMonth() + 1) + "-" + _pad(d.getDate()) +
+      "T" + _pad(d.getHours()) + ":" + _pad(d.getMinutes()) + ":" + _pad(d.getSeconds()) +
+      _offsetString(d.getTimezoneOffset())
+    );
+  }
+
+  const TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?([Zz]|[+-]\d{2}:?\d{2})?$/;
+
+  /** True if a Date's getters round-trip to the given wall-clock components (catches JS's silent date rollover, e.g. Feb 30 -> Mar 2). */
+  function _roundTrips(d, y, mo, da, hh, mi, se, utc) {
+    if (utc) {
+      return d.getUTCFullYear() === y && d.getUTCMonth() === mo - 1 && d.getUTCDate() === da &&
+        d.getUTCHours() === hh && d.getUTCMinutes() === mi && d.getUTCSeconds() === se;
+    }
+    return d.getFullYear() === y && d.getMonth() === mo - 1 && d.getDate() === da &&
+      d.getHours() === hh && d.getMinutes() === mi && d.getSeconds() === se;
+  }
+
+  /**
+   * Parse a user-typed timestamp for the save-step "when" field.
+   *
+   * Accepts YYYY-MM-DDTHH:MM[:SS] with a trailing Z, a numeric offset
+   * (+HH:MM / +HHMM), or no offset at all (interpreted as local time).
+   *
+   * Returns {ok: true, ts, localDate} where `ts` is the UTC normalisation
+   * (seconds precision, "Z" suffix — comparable with every other event's
+   * ts) and `localDate` is the "YYYY-MM-DD" the user actually typed, i.e.
+   * the note's date from the human's point of view; that's what relative
+   * `!` nudge specs resolve against. On failure, {ok: false, error}.
+   */
+  function parseTimestamp(text) {
+    const trimmed = String(text == null ? "" : text).trim();
+    const m = TS_RE.exec(trimmed);
+    if (!m) {
+      return { ok: false, error: "invalid timestamp — expected e.g. 2026-07-13T09:42:00+01:00" };
+    }
+    const y = Number(m[1]), mo = Number(m[2]), da = Number(m[3]);
+    const hh = Number(m[4]), mi = Number(m[5]), se = m[6] !== undefined ? Number(m[6]) : 0;
+    const offsetToken = m[7];
+    const localDate = m[1] + "-" + m[2] + "-" + m[3];
+
+    let epochMs;
+    if (offsetToken === undefined) {
+      // No offset: interpret as local wall-clock time.
+      const d = new Date(y, mo - 1, da, hh, mi, se);
+      if (!_roundTrips(d, y, mo, da, hh, mi, se, false)) {
+        return { ok: false, error: "that date/time doesn't exist" };
+      }
+      epochMs = d.getTime();
+    } else {
+      const d = new Date(Date.UTC(y, mo - 1, da, hh, mi, se));
+      if (!_roundTrips(d, y, mo, da, hh, mi, se, true)) {
+        return { ok: false, error: "that date/time doesn't exist" };
+      }
+      if (offsetToken === "Z" || offsetToken === "z") {
+        epochMs = d.getTime();
+      } else {
+        const sign = offsetToken[0] === "-" ? -1 : 1;
+        const digits = offsetToken.slice(1).replace(":", "");
+        const offMinutes = sign * (Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2, 4)));
+        epochMs = d.getTime() - offMinutes * 60000;
+      }
+    }
+    const ts = new Date(epochMs).toISOString().replace(/\.\d{3}Z$/, "Z");
+    return { ok: true, ts: ts, localDate: localDate };
   }
 
   // ================================================================
@@ -629,6 +719,9 @@
     fold: fold,
     // events.py
     nowTs: nowTs,
+    // timestamp entry (save-step "when" field)
+    nowLocalISO: nowLocalISO,
+    parseTimestamp: parseTimestamp,
     events: {
       note: eventNote,
       close: eventClose,
