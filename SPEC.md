@@ -316,8 +316,10 @@ more:
 - **Gone quiet** — people with no contact in `cadence_days` (per-person, set
   once).
 - **Open loops** — all unresolved commitments and questions, grouped by person.
-  Sorted oldest-first. This is the sleeper feature: "what did I promise someone
-  and not do?" is a harder question than "who haven't I talked to lately."
+  Sorted newest-first, like every list surface (the thread view's narrative
+  arc is the exception). This is the sleeper feature: "what did I promise
+  someone and not do?" is a harder question than "who haven't I talked to
+  lately."
 - **Recent** — last ~5 notes, to jog memory.
 
 Clicking an open loop closes it (with optional comment). Clicking a person opens
@@ -596,7 +598,7 @@ app render --open                        # all open items
 ```
 export/
   README.md                  # states that this dir is generated and read-only
-  open.md                    # all open items, grouped by person, oldest first
+  open.md                    # all open items, grouped by person, newest first
   closed.md                  # all closed items, grouped by person, newest first
   threads/
     sarah-chen.md            # full chronological thread render

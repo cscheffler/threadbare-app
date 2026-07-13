@@ -33,7 +33,7 @@ def test_two_states_only(state):
 
 def test_open_items_are_open_heads_only(state):
     # itm_a superseded, itm_c closed, itm_b reopened, itm_d open
-    assert [i.id for i in state.open_items()] == ["itm_b", "itm_d"]
+    assert [i.id for i in state.open_items()] == ["itm_d", "itm_b"]
     assert [i.id for i in state.closed_items()] == ["itm_c"]
 
 

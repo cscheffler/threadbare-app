@@ -188,7 +188,7 @@ test("fold: exactly two states", () => {
 
 test("fold: open/closed heads only", () => {
   const s = TB.fold(scenarioEvents());
-  assert.deepEqual(s.openItems().map((i) => i.id), ["itm_b", "itm_d"]);
+  assert.deepEqual(s.openItems().map((i) => i.id), ["itm_d", "itm_b"]);
   assert.deepEqual(s.closedItems().map((i) => i.id), ["itm_c"]);
 });
 

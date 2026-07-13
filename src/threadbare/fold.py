@@ -88,10 +88,10 @@ class State:
         return out
 
     def open_items(self) -> list[Item]:
-        """Open chain heads, oldest first — the "open loops" list."""
+        """Open chain heads, newest first — the "open loops" list."""
         out = [i for i in self.items.values()
                if i.superseded_by is None and i.status == "open"]
-        out.sort(key=lambda i: i.opened_ts)
+        out.sort(key=lambda i: i.opened_ts, reverse=True)
         return out
 
     def closed_items(self) -> list[Item]:

@@ -424,7 +424,7 @@
       const out = Object.values(state.items).filter(
         (i) => i.superseded_by === null && i.status === "open"
       );
-      out.sort((a, b) => (a.opened_ts < b.opened_ts ? -1 : a.opened_ts > b.opened_ts ? 1 : 0));
+      out.sort((a, b) => (a.opened_ts > b.opened_ts ? -1 : a.opened_ts < b.opened_ts ? 1 : 0));
       return out;
     };
     state.closedItems = function () {
