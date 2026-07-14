@@ -130,6 +130,42 @@ async function apiAppend(event) {
   return res.json();
 }
 
+// True when a window-focus refresh must not call renderRoute(), because doing
+// so would rebuild DOM out from under in-progress, unsaved user input:
+//  - the person-edit form is open and currently on screen — checked by DOM
+//    presence (view.querySelector), not by the raw PersonPageState.editing
+//    flag: that flag is set by clicking "Edit" and only cleared by that
+//    form's own Save/Cancel, so it stays set if the user navigates away
+//    (e.g. clicks "Dashboard") without closing the form first. Guarding on
+//    the flag alone would make every future focus refresh a no-op — on
+//    every route, forever — which is exactly the "permanently inert" guard
+//    the fix must avoid. Checking the form's actual DOM presence instead
+//    means the guard only fires while that form is what's on screen;
+//  - any focused input/textarea/select living inside #view — this generically
+//    covers the dashboard closeWidget comment field, snoozeWidget date input,
+//    the scratchpad textarea, and the People-view filter input, without
+//    needing one check per widget. (This also covers the person-edit form's
+//    own text fields; the DOM-presence check above additionally covers the
+//    moment focus is on that form's Save/Cancel buttons.)
+//  - the save/confirmation overlay (openConfirmPanel) is open. The overlay
+//    itself is appended to document.body, not #view, so renderRoute() never
+//    touches its DOM directly — but renderPad() and renderPeople() both end
+//    by unconditionally focusing an element of the (hidden, behind-the-
+//    overlay) view they just rebuilt. Left unguarded, a focus refresh while
+//    the overlay is open silently steals focus from e.g. the "when" field
+//    the user is mid-edit in, out into the hidden scratchpad textarea
+//    underneath — a real instance of "re-render clobbers in-progress input"
+//    even though the overlay's own DOM and value survive untouched.
+function renderWouldClobberInput() {
+  if (document.querySelector(".overlay")) return true;
+  const view = document.getElementById("view");
+  if (!view) return false;
+  if (view.querySelector(".person-edit-form")) return true;
+  const ae = document.activeElement;
+  if (!ae || !view.contains(ae)) return false;
+  return ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT";
+}
+
 async function refreshEvents(opts) {
   const render = !opts || opts.render !== false;
   try {
@@ -1285,7 +1321,10 @@ async function boot() {
   await refreshEvents({ render: false });
   renderRoute();
   window.addEventListener("hashchange", renderRoute);
-  window.addEventListener("focus", () => refreshEvents());
+  // Focus poll: always refresh server state and the dot, but skip the
+  // re-render when it would clobber in-progress input (SPEC.md, "Resilience
+  // → Backend-state indicator").
+  window.addEventListener("focus", () => refreshEvents({ render: !renderWouldClobberInput() }));
 }
 
 boot();

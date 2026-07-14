@@ -160,7 +160,9 @@ only job is to ensure the user learns the process died at lunch *before* they
 type forty minutes of notes on top of that assumption.
 
 Polling for this should be lazy — on load, on save, and on window focus. Not a
-timer.
+timer. A focus poll refreshes state and the dot but must never re-render over
+in-progress input — alt-tabbing back cannot be allowed to clobber a
+half-filled form.
 
 ### LLM calls
 
