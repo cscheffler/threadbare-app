@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Opaque white background tile so the black art reads on a dark tab -->
+  <rect x="0" y="0" width="64" height="64" rx="12" ry="12" fill="#ffffff"/>
+  <!-- Top flange (shifted/trimmed left to open a tail corridor on the right) -->
+  <rect x="6" y="6" width="40" height="10" rx="4" ry="4" fill="#111111"/>
+  <!-- Bottom flange -->
+  <rect x="6" y="48" width="40" height="10" rx="4" ry="4" fill="#111111"/>
+  <!-- Barrel outline (vertical axis, thread wound around it) -->
+  <rect x="12" y="16" width="28" height="32" rx="2" ry="2" fill="none" stroke="#111111" stroke-width="4" stroke-linejoin="round"/>
+  <!-- Wound thread wraps -->
+  <line x1="12" y1="25.5" x2="40" y2="25.5" stroke="#111111" stroke-width="7" stroke-linecap="round"/>
+  <line x1="12" y1="38.5" x2="40" y2="38.5" stroke="#111111" stroke-width="7" stroke-linecap="round"/>
+  <!-- Loose trailing thread end: longer sweep hugging the tile's right edge, arcing down past flange level -->
+  <path d="M40,38.5 C50,40 60,43 61,52 C61,58 57,61 52,61" fill="none" stroke="#111111" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
