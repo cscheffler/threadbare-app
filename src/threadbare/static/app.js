@@ -99,7 +99,11 @@ function clearDraft() { localStorage.removeItem(LS_DRAFT); }
 // ---------------------------------------------------------------- app state
 
 const App = { serverEvents: [], events: [], folded: TB.fold([]), cursor: null, lastContactOK: null };
-const PeopleState = { filter: "" };
+// creating tracks whether the inline "New person" form is open. It survives
+// navigation away and back (mirrors PersonPageState.editing below) — only
+// Cancel or a successful Save clears it. renderWouldClobberInput() protects
+// the form's in-progress input via its person-edit-form class regardless.
+const PeopleState = { filter: "", creating: false };
 // PersonPageState.editing holds the id of the person whose inline edit form
 // is open, else null. Keyed by id (not a bool) so navigating to a different
 // person never accidentally reopens someone else's form.
@@ -1044,12 +1048,30 @@ function renderPeople() {
   view.innerHTML = "";
   view.appendChild(el("h1", { text: "People" }));
 
+  const filterRow = el("div", { class: "people-filter-row" });
   const filterInput = el("input", {
     type: "text", id: "people-filter", class: "people-filter",
     placeholder: "filter by name or alias", autocomplete: "off",
   });
   filterInput.value = PeopleState.filter;
-  view.appendChild(filterInput);
+  filterRow.appendChild(filterInput);
+
+  const newBtn = el("button", { class: "btn-small people-new-btn", text: "New person" });
+  newBtn.addEventListener("click", () => {
+    if (PeopleState.creating) {
+      // already open: a re-render would rebuild the form blank and wipe
+      // anything half-typed into it — just put focus back on it instead
+      const nameInput = view.querySelector(".person-create-form .person-edit-input");
+      if (nameInput) nameInput.focus();
+      return;
+    }
+    PeopleState.creating = true;
+    renderPeople();
+  });
+  filterRow.appendChild(newBtn);
+  view.appendChild(filterRow);
+
+  if (PeopleState.creating) view.appendChild(personCreateForm());
 
   const listWrap = el("div", { id: "people-list-wrap" });
   view.appendChild(listWrap);
@@ -1060,7 +1082,14 @@ function renderPeople() {
     renderPeopleList(listWrap);
   });
 
-  filterInput.focus();
+  if (PeopleState.creating) {
+    // The create form is appended above; focus its name input now that it's
+    // actually attached to #view (focusing before attach is a no-op).
+    const nameInput = view.querySelector(".person-create-form .person-edit-input");
+    if (nameInput) nameInput.focus();
+  } else {
+    filterInput.focus();
+  }
 }
 
 function renderPeopleList(container) {
@@ -1162,19 +1191,20 @@ function renderPersonView(pid) {
   else for (const n of notes) view.appendChild(personNoteBlock(s, n));
 }
 
+// Shared by personEditForm and personCreateForm below.
+function fieldRow(labelText, input) {
+  const row = el("div", { class: "person-edit-row" });
+  row.appendChild(el("label", { class: "person-edit-label", text: labelText }));
+  row.appendChild(input);
+  return row;
+}
+
 // Inline edit form for the person card. Prefilled from the fold's current
 // record; Save builds a `person` event carrying only the fields that
 // actually changed (the fold merges field-wise — see core.js PERSON_FIELDS),
 // so an untouched field must never appear in the emitted record.
 function personEditForm(p) {
   const form = el("div", { class: "person-edit-form" });
-
-  function fieldRow(labelText, input) {
-    const row = el("div", { class: "person-edit-row" });
-    row.appendChild(el("label", { class: "person-edit-label", text: labelText }));
-    row.appendChild(input);
-    return row;
-  }
 
   const nameInput = el("input", { type: "text", class: "person-edit-input" });
   nameInput.value = p.name || "";
@@ -1227,20 +1257,15 @@ function personEditForm(p) {
     addListFieldDiff(record, "tags", tagsInput.value, p.tags);
     addListFieldDiff(record, "links", linksInput.value, p.links);
 
-    const cadenceRaw = cadenceInput.value.trim();
-    let cadenceValue;
-    if (cadenceRaw === "") {
-      cadenceValue = null;
-    } else if (!/^\d+$/.test(cadenceRaw) || parseInt(cadenceRaw, 10) <= 0) {
-      cadenceError.textContent = "cadence must be a positive whole number of days";
+    const cadenceParsed = parseCadenceDays(cadenceInput.value);
+    if (cadenceParsed.error) {
+      cadenceError.textContent = cadenceParsed.error;
       cadenceInput.focus();
       cadenceInput.select();
       return; // invalid: leave the form open, save nothing
-    } else {
-      cadenceValue = parseInt(cadenceRaw, 10);
     }
     const currentCadence = (p.cadence_days === undefined) ? null : p.cadence_days;
-    if (cadenceValue !== currentCadence) record.cadence_days = cadenceValue;
+    if (cadenceParsed.value !== currentCadence) record.cadence_days = cadenceParsed.value;
 
     if (Object.keys(record).length <= 1) {
       // nothing changed: close the form, do not append a no-op event
@@ -1270,6 +1295,121 @@ function personEditForm(p) {
   return form;
 }
 
+// Inline create form for a brand-new person, opened from the People index's
+// "New person" button. Mirrors personEditForm's fields (name, org, aliases,
+// tags, links, met, cadence) and the same comma-list / cadence parsing, but
+// starts blank and requires a non-empty name — mirroring `app person add
+// NAME [--org ...]`, where name is the only positional (required) field.
+// Carries the person-edit-form class (like personEditForm) so the focus-poll
+// guard in renderWouldClobberInput() protects it while it's on screen.
+function personCreateForm() {
+  const form = el("div", { class: "person-edit-form person-card person-create-form" });
+
+  const nameInput = el("input", { type: "text", class: "person-edit-input" });
+  const nameError = el("span", { class: "person-edit-error" });
+  const orgInput = el("input", { type: "text", class: "person-edit-input" });
+  const aliasesInput = el("input", { type: "text", class: "person-edit-input" });
+  const tagsInput = el("input", { type: "text", class: "person-edit-input" });
+  const linksInput = el("input", { type: "text", class: "person-edit-input" });
+  const metInput = el("input", { type: "text", class: "person-edit-input" });
+  const cadenceInput = el("input", {
+    type: "text", class: "person-edit-input", inputmode: "numeric", placeholder: "days, blank = none",
+  });
+  const cadenceError = el("span", { class: "person-edit-error" });
+
+  const nameRow = fieldRow("name", nameInput);
+  nameRow.appendChild(nameError);
+  form.appendChild(nameRow);
+  form.appendChild(fieldRow("org", orgInput));
+  form.appendChild(fieldRow("aliases", aliasesInput));
+  form.appendChild(fieldRow("tags", tagsInput));
+  form.appendChild(fieldRow("links", linksInput));
+  form.appendChild(fieldRow("met", metInput));
+  const cadenceRow = fieldRow("cadence (days)", cadenceInput);
+  cadenceRow.appendChild(cadenceError);
+  form.appendChild(cadenceRow);
+
+  const actions = el("div", { class: "person-edit-actions" });
+  const saveBtn = el("button", { class: "btn-primary", text: "Save" });
+  const cancelBtn = el("button", { class: "btn-small", text: "Cancel" });
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+  form.appendChild(actions);
+
+  function cancel() {
+    PeopleState.creating = false;
+    renderPeople();
+  }
+
+  async function save() {
+    nameError.textContent = "";
+    cadenceError.textContent = "";
+
+    const name = nameInput.value.trim();
+    if (!name) {
+      nameError.textContent = "name is required";
+      nameInput.focus();
+      nameInput.select();
+      return; // invalid: leave the form open, save nothing
+    }
+
+    // Duplicate check against the current local fold (App.folded.people
+    // already reflects any queued-but-unsynced events) — mirrors the CLI's
+    // `die(f"{pid} exists; ...")` in cmd_person_add.
+    const pid = TB.personId(name);
+    if (App.folded.people[pid]) {
+      nameError.appendChild(el("a", { href: "#/person/" + encodeURIComponent(pid), text: pid }));
+      nameError.appendChild(document.createTextNode(" exists — edit them instead"));
+      nameInput.focus();
+      nameInput.select();
+      return; // duplicate: leave the form open, append nothing
+    }
+
+    const cadenceParsed = parseCadenceDays(cadenceInput.value);
+    if (cadenceParsed.error) {
+      cadenceError.textContent = cadenceParsed.error;
+      cadenceInput.focus();
+      cadenceInput.select();
+      return; // invalid: leave the form open, save nothing
+    }
+
+    // Mirrors cli._person_record: id + name always present, every other
+    // field included only when non-empty (no blank strings, no empty lists,
+    // no null cadence).
+    const record = { id: pid, name: name };
+    const org = orgInput.value.trim();
+    if (org) record.org = org;
+    const aliases = parseCommaList(aliasesInput.value);
+    if (aliases.length) record.aliases = aliases;
+    const tags = parseCommaList(tagsInput.value);
+    if (tags.length) record.tags = tags;
+    const links = parseCommaList(linksInput.value);
+    if (links.length) record.links = links;
+    const met = metInput.value.trim();
+    if (met) record.met_context = met;
+    if (cadenceParsed.value !== null) record.cadence_days = cadenceParsed.value;
+
+    saveBtn.disabled = true; cancelBtn.disabled = true;
+    const ok = await queueAndFlush([TB.events.person(record)], { render: false });
+    if (!ok) showGlobalBanner("backend unreachable — new person is queued; Save retries");
+    PeopleState.creating = false;
+    location.hash = "#/person/" + encodeURIComponent(pid);
+  }
+
+  saveBtn.addEventListener("click", save);
+  cancelBtn.addEventListener("click", cancel);
+
+  function onKeydown(ev) {
+    if (ev.key === "Enter") { ev.preventDefault(); save(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
+  }
+  for (const input of [nameInput, orgInput, aliasesInput, tagsInput, linksInput, metInput, cadenceInput]) {
+    input.addEventListener("keydown", onKeydown);
+  }
+
+  return form;
+}
+
 // Trimmed-text diff: unchanged (after trimming) -> untouched; changed-to-blank
 // -> null (clears the field on merge); else the trimmed value.
 function addTextFieldDiff(record, field, rawValue, currentValue) {
@@ -1279,14 +1419,33 @@ function addTextFieldDiff(record, field, rawValue, currentValue) {
   record[field] = trimmed === "" ? null : trimmed;
 }
 
-// Comma-split list diff: entries trimmed, empties dropped, compared
-// order-sensitively against the current array; changed-to-blank -> [].
+// Comma-split list parse: entries trimmed, empties dropped. Shared by the
+// create form (build-if-non-empty) and addListFieldDiff below (diff against
+// the current array).
+function parseCommaList(rawValue) {
+  return rawValue.split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+// Comma-split list diff: compared order-sensitively against the current
+// array; changed-to-blank -> [].
 function addListFieldDiff(record, field, rawValue, currentValue) {
-  const list = rawValue.split(",").map((v) => v.trim()).filter(Boolean);
+  const list = parseCommaList(rawValue);
   const current = currentValue || [];
   const same = list.length === current.length && list.every((v, i) => v === current[i]);
   if (same) return;
   record[field] = list;
+}
+
+// Cadence input parse: blank -> {value: null}; positive integer -> {value};
+// anything else -> {error}. Shared by personEditForm (diffed against the
+// current value) and personCreateForm (included only when non-null).
+function parseCadenceDays(rawValue) {
+  const trimmed = rawValue.trim();
+  if (trimmed === "") return { value: null };
+  if (!/^\d+$/.test(trimmed) || parseInt(trimmed, 10) <= 0) {
+    return { error: "cadence must be a positive whole number of days" };
+  }
+  return { value: parseInt(trimmed, 10) };
 }
 
 function personOpenLoopRow(s, item) {

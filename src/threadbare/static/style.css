@@ -121,12 +121,14 @@ main#view { max-width: 900px; margin: 0 auto; padding: 0.5em 1em 3em; }
 .confirm-ts-error { color: var(--danger); font-size: 0.85em; }
 .item-due-label { color: var(--muted); }
 
+.people-filter-row { display: flex; align-items: center; gap: 0.6em; margin: 0.4em 0 0.9em; }
 .people-filter {
-  display: block; width: 100%; max-width: 360px; font: inherit;
+  flex: 1 1 auto; max-width: 360px; font: inherit;
   background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.35em 0.6em; margin: 0.4em 0 0.9em;
+  padding: 0.35em 0.6em;
 }
 .people-list li { margin-bottom: 0.4em; }
+.person-create-form { margin-bottom: 0.9em; }
 
 .person-card {
   background: var(--panel-bg); border: 1px solid var(--border); border-radius: 6px;

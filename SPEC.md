@@ -435,6 +435,16 @@ edits go through the same append pipeline as saves: queued, retried, safe
 with the backend down. The id stays frozen; renames change only the display
 name.
 
+A "New person" button next to the filter input opens the same inline form,
+blank, above the list. Name is the only required field — everything else
+(org, aliases, tags, links, how met, cadence) is optional, mirroring `app
+person add NAME [--org ...]` where name is the sole positional argument. The
+id is the usual `per_<slug>` derived from the name; if that id already
+belongs to someone, Save is rejected with an inline error linking to their
+existing page instead of creating a duplicate. A successful save goes
+through the same queue pipeline as every other write (queued, retried, safe
+with the backend down) and lands on the new person's page.
+
 ---
 
 ---
